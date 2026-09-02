@@ -1,0 +1,22 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start:deterministic": "SUPPLIER_FAIL_RATE=0 SUPPLIER_TIMEOUT_RATE=0 node index.js",
+    "seed": "node seed.js",
+    "load-test": "node ../scripts/load-test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
