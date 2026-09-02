@@ -54,6 +54,12 @@ npm run load-test   # сервер должен быть уже запущен
 - **Этап 5** — design-заметка про индексы и запрос витрины остатков на
   тысячах+ SKU (в NOTES.md, без генерации фейковых данных).
 
+## API-документация
+
+`openapi.yaml` в корне — OpenAPI 3.0 спека по всем эндпоинтам. Можно открыть
+в Swagger Editor (editor.swagger.io → File → Import file) или в любом
+OpenAPI-вьюере.
+
 ## Эндпоинты
 
 - `GET /api/products` — каталог.

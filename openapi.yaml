@@ -1,0 +1,306 @@
+openapi: 3.0.3
+info:
+  title: GameKeys Store Backend
+  version: "1.0.0"
+  description: >
+    Ядро магазина цифровых товаров: заказы, вебхук оплаты, выдача кода через
+    двух поставщиков-заглушек с ретраями/fallback, сверка и восстановление.
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /api/products:
+    get:
+      summary: Каталог товаров
+      responses:
+        "200":
+          description: Список товаров
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+
+  /api/orders:
+    post:
+      summary: Создать заказ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku]
+              properties:
+                sku:
+                  type: string
+                  example: KEY-CS2-PRIME
+                id:
+                  type: string
+                  description: Опционально — свой id заказа (для тестов идемпотентности)
+      responses:
+        "201":
+          description: Заказ создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderCreated"
+        "404":
+          description: Товар с таким SKU не найден
+
+  /api/orders/{id}:
+    get:
+      summary: Статус заказа
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Заказ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Заказ не найден
+
+  /api/webhooks/payment:
+    post:
+      summary: Вебхук платёжной системы
+      description: >
+        At-least-once доставка: повтор с тем же event_id — no-op. Ответ должен
+        быть быстрым 200 OK; 5xx означает "повтори доставку позже" (например,
+        если заказ ещё не создан на момент вебхука).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentWebhook"
+      responses:
+        "200":
+          description: Обработано (в том числе дубликат/уже обработанный заказ)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    enum: [accepted, duplicate_event, already_processed, payment_failed]
+                  order:
+                    $ref: "#/components/schemas/Order"
+        "400":
+          description: Некорректное тело запроса
+        "503":
+          description: Заказ ещё не создан — платёжка должна повторить доставку
+
+  /api/admin/undelivered-orders:
+    get:
+      summary: Заказы в восстановимом состоянии (out_of_stock / delivery_failed)
+      responses:
+        "200":
+          description: Список
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+  /api/admin/reconciliation:
+    get:
+      summary: Сверка денежного леджера и заказов
+      description: >
+        delivered_without_charge и charged_without_order должны быть всегда
+        пустыми в здоровой системе — это сигнал рассинхрона, если нет.
+      responses:
+        "200":
+          description: Отчёт сверки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_charged:
+                    type: integer
+                  charge_count:
+                    type: integer
+                  paid_but_not_delivered:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Order"
+                  delivered_without_charge:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Order"
+                  charged_without_order:
+                    type: array
+                    items:
+                      type: object
+
+  /api/admin/orders/{id}/retry:
+    post:
+      summary: Повторная выдача для заказа в восстановимом состоянии
+      description: Идемпотентна — безопасно вызывать повторно и параллельно.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Результат повторной попытки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    enum: [retried, already_delivered]
+                  order:
+                    $ref: "#/components/schemas/Order"
+        "404":
+          description: Заказ не найден
+        "409":
+          description: Заказ не в восстановимом состоянии
+
+  /api/admin/restock:
+    post:
+      summary: Пополнить пул ключей
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  default: 1
+      responses:
+        "200":
+          description: Сколько ключей добавлено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restocked:
+                    type: integer
+
+  /api/test/force-delivery:
+    post:
+      summary: Тестовый эндпоинт — форсирует поведение поставщиков
+      description: >
+        Только для тестов/демонстрации сценариев (используется в
+        scripts/load-test.js). Значения forceA/forceB — success | error | timeout.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id:
+                  type: string
+                forceA:
+                  type: string
+                  enum: [success, error, timeout]
+                forceB:
+                  type: string
+                  enum: [success, error, timeout]
+      responses:
+        "200":
+          description: Заказ после попытки доставки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order:
+                    $ref: "#/components/schemas/Order"
+        "404":
+          description: Заказ не найден
+
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [topup, key, subscription, giftcard]
+        price:
+          type: integer
+        currency:
+          type: string
+        image:
+          type: string
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [created, paid, delivering, delivered, payment_failed, out_of_stock, delivery_failed]
+        delivered_code:
+          type: string
+          nullable: true
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+
+    OrderCreated:
+      type: object
+      properties:
+        order_id:
+          type: string
+        sku:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          example: created
+
+    PaymentWebhook:
+      type: object
+      required: [event_id, order_id, status]
+      properties:
+        event_id:
+          type: string
+          example: evt_a1b2c3
+        order_id:
+          type: string
+          example: ord_00123
+        status:
+          type: string
+          enum: [paid, failed]
+        amount:
+          type: integer
+        currency:
+          type: string
+        created_at:
+          type: string
+          format: date-time
