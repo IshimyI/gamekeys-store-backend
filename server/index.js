@@ -81,8 +81,6 @@ async function attemptSupplierOnce(supplier, order, requestId, force) {
   return { status: 'timeout' };
 }
 
-// Ретраи с бэкоффом только на явную ошибку поставщика (4xx/5xx).
-// Таймаут — отдельный случай: не повторяем с новым request_id, ждём поздний ответ на исходный.
 async function attemptSupplierWithBackoff(supplier, order, force) {
   let result;
   for (let attempt = 1; attempt <= SUPPLIER_MAX_ATTEMPTS; attempt++) {
@@ -90,7 +88,7 @@ async function attemptSupplierWithBackoff(supplier, order, force) {
     result = await attemptSupplierOnce(supplier, order, requestId, force);
 
     if (result.status !== 'error') return result;
-    if (result.reason === 'out_of_stock') return result; // повторять бессмысленно, лучше сразу fallback
+    if (result.reason === 'out_of_stock') return result;
 
     if (attempt < SUPPLIER_MAX_ATTEMPTS) {
       const delay = SUPPLIER_BACKOFF_BASE_MS * 2 ** (attempt - 1);
@@ -184,8 +182,6 @@ app.post('/api/webhooks/payment', async (req, res) => {
   runDelivery(order_id).catch((err) => log('delivery_error', { order_id, error: err.message }));
 });
 
-// Общая точка перехода created → delivering: и вебхук, и тестовый форс-эндпоинт
-// проходят через неё, чтобы леджер всегда отражал реальность (см. /reconciliation).
 function markPaidAndDelivering(order) {
   setOrderStatus.run('delivering', Date.now(), order.id);
   try {
@@ -213,8 +209,8 @@ app.get('/api/admin/reconciliation', (req, res) => {
     total_charged: sumLedger.get().total,
     charge_count: ledger.length,
     paid_but_not_delivered: paidButNotDelivered,
-    delivered_without_charge: deliveredWithoutCharge, // должно быть всегда пусто
-    charged_without_order: chargedWithoutOrder, // должно быть всегда пусто
+    delivered_without_charge: deliveredWithoutCharge,
+    charged_without_order: chargedWithoutOrder,
   });
 });
 
@@ -252,10 +248,6 @@ app.post('/api/test/force-delivery', async (req, res) => {
   res.json({ order: getOrder.get(order_id) });
 });
 
-// Фоновая задача: подбирает заказы, застрявшие в out_of_stock/delivery_failed,
-// и безопасно повторяет выдачу. Использует ту же идемпотентную транзакцию
-// перехода в delivering, что и ручной retry — гонки между sweep и admin retry
-// исключены синхронностью SQLite-вызовов.
 const SWEEP_INTERVAL_MS = Number(process.env.SWEEP_INTERVAL_MS ?? 15000);
 const SWEEP_MIN_AGE_MS = Number(process.env.SWEEP_MIN_AGE_MS ?? 10000);
 const SWEEP_BATCH_SIZE = Number(process.env.SWEEP_BATCH_SIZE ?? 5);
@@ -269,7 +261,7 @@ async function sweepStuckOrders() {
     setOrderStatus.run('delivering', Date.now(), fresh.id);
     log('order_retry', { order_id: fresh.id, triggered_by: 'sweep' });
     await runDelivery(fresh.id);
-    await sleep(50); // не долбим поставщика пачкой запросов подряд
+    await sleep(50);
   }
 }
 
